@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+pytest
+SpeechRecognition
+python-multipart
+gTTS
