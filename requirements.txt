@@ -3,7 +3,12 @@ uvicorn
 pydantic
 python-dotenv
 pytest
-SpeechRecognition
 python-multipart
-gTTS
 pyaudio 
+vosk
+TTS
+torch
+transformers
+accelerate
+sentencepiece
+nvidia-smi
