@@ -19,10 +19,6 @@ router = APIRouter()
 
 class GenerateRequest(BaseModel):
     prompt: str
-    max_new_tokens: int = 100 
-    temperature: float = 0.6
-    top_p: float = 0.9
-    repetition_penalty: float = 1.2
 
 # Globalne zmienne dla modelu
 model = None
@@ -170,7 +166,7 @@ async def generate_response(request: GenerateRequest):
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                temperature=0.3,  # Zmniejszona temperatura dla bardziej deterministycznych odpowiedzi
+                temperature=0.5,  # Zmniejszona temperatura dla bardziej deterministycznych odpowiedzi
                 top_p=0.85,
                 repetition_penalty=1.3,
                 do_sample=True,
@@ -179,7 +175,7 @@ async def generate_response(request: GenerateRequest):
                 pad_token_id=tokenizer.pad_token_id,
                 no_repeat_ngram_size=3,
                 min_length=5,  # Minimum 5 tokenów, aby uniknąć zbyt krótkich odpowiedzi
-                max_new_tokens=request.max_new_tokens   # Ograniczenie nowych tokenów dla krótszych odpowiedzi
+                max_new_tokens=100 
             )
         
         
@@ -189,9 +185,7 @@ async def generate_response(request: GenerateRequest):
         # Dekodowanie odpowiedzi
         generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
-        # Ulepszone wyodrębnianie odpowiedzi
         if "<|assistant|>" in generated_text:
-            # Pobierz ostatnią odpowiedź asystenta
             responses = generated_text.split("<|assistant|>")
             response = responses[-1].strip()
             
@@ -201,7 +195,6 @@ async def generate_response(request: GenerateRequest):
             # Fallback, jeśli nie można znaleźć znacznika asystenta
             response = generated_text.replace(request.prompt, "").strip()
         
-        # Sprawdź, czy odpowiedź nie jest pusta
         if not response:
             response = "Przepraszam, nie wiem, jak odpowiedzieć na to pytanie."
         
@@ -268,7 +261,7 @@ async def test_gpu():
         # Test podstawowych operacji
         try:
             # Test wydajności
-            size = 2000  # Mniejszy rozmiar dla testu
+            size = 2000  # Rozmiar macierzy
             cpu_tensor = torch.randn(size, size)
             dml_tensor = cpu_tensor.to(dml)
             
