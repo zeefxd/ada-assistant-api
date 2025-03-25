@@ -9,3 +9,7 @@ vosk
 torch
 transformers
 accelerate
+requests
+aiofiles
+tqdm
+accelerate

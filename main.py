@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from api.routes import router
 import uvicorn
 
-app = FastAPI(title="Alexa API")
+app = FastAPI(title="Ada API")
 
 app.include_router(router)
 
