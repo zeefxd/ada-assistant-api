@@ -9,4 +9,3 @@ vosk
 torch
 transformers
 accelerate
-TTS

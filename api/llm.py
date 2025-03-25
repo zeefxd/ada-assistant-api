@@ -20,7 +20,6 @@ router = APIRouter()
 class GenerateRequest(BaseModel):
     prompt: str
 
-# Globalne zmienne dla modelu
 model = None
 tokenizer = None
 model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
@@ -124,14 +123,13 @@ async def generate_response(request: GenerateRequest):
         # Ładowanie modelu (lub użycie już załadowanego)
         model, tokenizer = get_model()
         
-        # Ulepszony prompt systemowy z bardziej precyzyjnymi instrukcjami
         system_prompt = """Jesteś pomocnym asystentem o imieniu Ada. Odpowiadasz zawsze poprawną polszczyzną.
         Formułujesz odpowiedzi jako krótkie, gramatycznie poprawne, jasne i zwięzłe zdania.
         Na pytania odpowiadasz konkretnie, poprawnie i zgodnie z prawdą.
         Nie zgaduj informacji, których nie znasz - powiedz wtedy, że nie wiesz.
         Twoje odpowiedzi są zawsze pomocne, dokładne i praktyczne."""
         
-        # Lepsze przykłady odpowiedzi (few-shot prompting)
+        # (few-shot prompting)
         examples = """
         <|user|>
         Jak się nazywasz?
@@ -166,7 +164,7 @@ async def generate_response(request: GenerateRequest):
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                temperature=0.5,  # Zmniejszona temperatura dla bardziej deterministycznych odpowiedzi
+                temperature=0.6,  
                 top_p=0.85,
                 repetition_penalty=1.3,
                 do_sample=True,
@@ -174,7 +172,7 @@ async def generate_response(request: GenerateRequest):
                 num_return_sequences=1,
                 pad_token_id=tokenizer.pad_token_id,
                 no_repeat_ngram_size=3,
-                min_length=5,  # Minimum 5 tokenów, aby uniknąć zbyt krótkich odpowiedzi
+                min_length=5,  
                 max_new_tokens=100 
             )
         
@@ -192,7 +190,6 @@ async def generate_response(request: GenerateRequest):
             if "<|user|>" in response:
                 response = response.split("<|user|>")[0].strip()
         else:
-            # Fallback, jeśli nie można znaleźć znacznika asystenta
             response = generated_text.replace(request.prompt, "").strip()
         
         if not response:
@@ -260,7 +257,6 @@ async def test_gpu():
         
         # Test podstawowych operacji
         try:
-            # Test wydajności
             size = 2000  # Rozmiar macierzy
             cpu_tensor = torch.randn(size, size)
             dml_tensor = cpu_tensor.to(dml)
@@ -275,7 +271,7 @@ async def test_gpu():
             start_dml = time.time()
             for _ in range(3):
                 dml_result = torch.matmul(dml_tensor, dml_tensor)
-            # Synchronizacja
+            
             _ = dml_result.cpu()
             dml_time = time.time() - start_dml
             

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import tempfile
 import os
 import subprocess
@@ -8,44 +8,48 @@ from pathlib import Path
 import requests
 import shutil
 import traceback
+import logging
+import time
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("tts")
 
 router = APIRouter()
 
 class TextToSpeech(BaseModel):
     text: str
     language: str = "pl"
-
+    speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Prędkość mowy (0.5-2.0)")
+    volume: float = Field(default=1.0, ge=0.1, le=5.0, description="Głośność (0.1-5.0)")
+    
 # https://github.com/rhasspy/piper
 models_dir = Path(__file__).parent.parent / "model" / "piper"
-model_name = "pl_PL-gosia-medium"  # Specific file name prefix
+model_name = "pl_PL-gosia-medium" 
+
+bin_dir = Path(__file__).parent.parent / "bin"  
+piper_exe = bin_dir / "piper.exe"  
 
 def ensure_piper_model():
-    # Create models directory if it doesn't exist
+    """Pobiera model Piper jeśli nie istnieje."""
     models_dir.mkdir(parents=True, exist_ok=True)
     
-    # Define model paths with specific file names
     model_path = models_dir / f"{model_name}.onnx"
-    config_path = models_dir / f"{model_name}.onnx.json"  # Note the .onnx.json extension
+    config_path = models_dir / f"{model_name}.onnx.json"
     
-    # Check if model exists, if not download it
     if not model_path.exists() or not config_path.exists():
         try:
             print(f"Pobieranie modelu Piper {model_name}...")
             
-            # Create parent directories if they don't exist
             model_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Base URL for the main branch
             base_url = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
             
-            # Correct path to the specific files
             model_url = f"{base_url}/pl/pl_PL/gosia/medium/{model_name}.onnx"
             config_url = f"{base_url}/pl/pl_PL/gosia/medium/{model_name}.onnx.json"
             
-            print(f"Downloading model from: {model_url}")
-            print(f"Downloading config from: {config_url}")
+            print(f"Pobieranie modelu z: {model_url}")
+            print(f"Pobieranie conifgu z: {config_url}")
             
-            # Download files
             for url, path in [(model_url, model_path), (config_url, config_path)]:
                 print(f"Pobieranie {url}...")
                 response = requests.get(url, stream=True)
@@ -63,48 +67,70 @@ def ensure_piper_model():
     
     return model_path, config_path
 
+def normalize_polish_text(text):
+    """Optymalizuje tekst dla Piper."""
+    replacements = {
+        'ą': 'om',
+        # Jakbyśmy się w przyszłości spotkali z innymi problemami z polskimi znakami to dodoajemy je tutaj
+    }
+    
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    
+    return text
+
 @router.post("/synthesize")
 async def synthesize_speech(request: TextToSpeech):
+    """Generuje mowę z tekstu przy użyciu Piper."""
     try:
         model_path, config_path = ensure_piper_model()
         
-        # Create temporary files for output and input text
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
             output_path = temp_audio.name
         
-        with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="utf-8") as temp_text:
-            temp_text.write(request.text)
-            text_path = temp_text.name
+        normalized_text = normalize_polish_text(request.text)
         
-        print("Generowanie mowy...")
+        logger.info(f"Generowanie mowy dla tekstu: '{normalized_text[:50]}...'")
+        start_time = time.time()
         
         try:
-            # Try using the Python API first
-            try:
-                from piper import PiperVoice
+            # Wywołanie piper.exe z przekazaniem tekstu przez stdin
+            cmd = [
+                str(piper_exe),
+                "--model", str(model_path),
+                "--config", str(config_path),
+                "--output_file", output_path,
+                "--speaker", "0",       
+                "--speed", str(request.speed),    
+                "--volume", str(request.volume)   
+            ]
+            
+            logger.info(f"Uruchamianie: {' '.join(cmd)}")
+            
+            process = subprocess.run(
+                cmd, 
+                input=normalized_text,
+                text=True,           
+                check=True,          
+                timeout=30,          
+                capture_output=True  
+            )
                 
-                voice = PiperVoice.load(str(model_path), config_path=str(config_path))
-                with open(output_path, "wb") as audio_file:
-                    voice.synthesize_to_file(request.text, audio_file)
-                print("Wygenerowano mowę przez API Pythona.")
+            logger.info(f"Wygenerowano mowę przez Piper w {time.time() - start_time:.2f}s")
+            
+            if process.stdout:
+                logger.info(f"Piper stdout: {process.stdout}")
+            
+            if os.path.getsize(output_path) < 100:
+                raise Exception("Wygenerowany plik audio jest zbyt mały lub pusty")
                 
-            except (ImportError, ModuleNotFoundError):
-                # Fall back to command-line if Python API is not available
-                print("API Pythona niedostępne, użycie CLI piper...")
-                subprocess.run([
-                    "piper",
-                    "--model", str(model_path),
-                    "--config", str(config_path),
-                    "--output_file", output_path,
-                    "--input_file", text_path
-                ], check=True)
-                print("Wygenerowano mowę przez CLI piper.")
-                
+        except subprocess.TimeoutExpired as e:
+            logger.error(f"Timeout podczas generowania mowy: {str(e)}")
+            raise Exception(f"Przekroczony czas oczekiwania (30s) na wygenerowanie mowy")
+            
         except Exception as e:
+            logger.error(f"Błąd podczas generowania mowy: {str(e)}")
             raise Exception(f"Błąd podczas generowania mowy: {str(e)}")
-        
-        # Clean up the temporary text file
-        os.unlink(text_path)
         
         return FileResponse(
             output_path,
@@ -113,4 +139,5 @@ async def synthesize_speech(request: TextToSpeech):
         )
     except Exception as e:
         error_details = str(e) + "\n" + traceback.format_exc()
+        logger.error(f"Błąd: {error_details}")
         raise HTTPException(status_code=500, detail=f"Błąd: {error_details}")
