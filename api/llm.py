@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from pathlib import Path
 from dotenv import load_dotenv
+from api.command_detector import CommandDetector, CommandType
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -120,6 +121,26 @@ def get_model():
 async def generate_response(request: GenerateRequest):
     """Generuje odpowiedź na podstawie prompta."""
     try:
+        logger.info(f"Otrzymano zapytanie: '{request.prompt}'")
+        
+        command_detector = CommandDetector()
+        is_command, cmd_type, params = command_detector.detect_command(request.prompt)
+        
+        logger.info(f"Wynik detekcji poleceń: is_command={is_command}, cmd_type={cmd_type}, params={params}")
+        
+        if is_command:
+            command_info = command_detector.execute_command(cmd_type, params)
+            logger.info(f"Wykryto polecenie: {cmd_type.value if cmd_type else 'nieznane'}")
+            logger.info(f"Parametry polecenia: {params}")
+            
+            return {
+                "is_command": True,
+                "command_data": command_info,
+                "response": command_info["user_message"] 
+            }
+        
+        logger.info("Brak polecenia, kontynuacja standardowego generowania odpowiedzi")
+        
         # Ładowanie modelu (lub użycie już załadowanego)
         model, tokenizer = get_model()
         
@@ -195,8 +216,11 @@ async def generate_response(request: GenerateRequest):
         if not response:
             response = "Przepraszam, nie wiem, jak odpowiedzieć na to pytanie."
         
-        return {"response": response}
-        
+        return {
+            "is_command": False,
+            "response": response
+        }
+    
     except Exception as e:
         import traceback
         error_details = str(e) + "\n" + traceback.format_exc()
@@ -241,7 +265,6 @@ async def test_gpu():
             "error": None
         }
         
-        # Sprawdź dostępność DirectML
         try:
             import torch_directml
             dml = torch_directml.device()
@@ -290,3 +313,36 @@ async def test_gpu():
     except Exception as e:
         import traceback
         return {"error": f"Ogólny błąd: {str(e)}\n{traceback.format_exc()}"}
+    
+    
+@router.post("/test_command_detection")
+async def test_command_detection(request: GenerateRequest):
+    """Testuje wykrywanie poleceń bez uruchamiania modelu LLM."""
+    try:
+        logger.info(f"Testowanie wykrywania poleceń dla: '{request.prompt}'")
+        
+        command_detector = CommandDetector()
+        is_command, cmd_type, params = command_detector.detect_command(request.prompt)
+        
+        if is_command:
+            command_info = command_detector.execute_command(cmd_type, params)
+            logger.info(f"Wykryto polecenie: {cmd_type.value if cmd_type else 'nieznane'}")
+            logger.info(f"Parametry: {params}")
+            return {
+                "detected": True,
+                "command_type": cmd_type.value if cmd_type else "unknown",
+                "parameters": params,
+                "esp32_info": command_info,
+                "user_message": command_info["user_message"]
+            }
+        else:
+            logger.info("Nie wykryto polecenia")
+            return {
+                "detected": False,
+                "prompt": request.prompt
+            }
+    except Exception as e:
+        import traceback
+        error_details = str(e) + "\n" + traceback.format_exc()
+        logger.error(f"Błąd testowania poleceń: {error_details}")
+        return {"error": error_details}
