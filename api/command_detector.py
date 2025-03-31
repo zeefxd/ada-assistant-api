@@ -11,6 +11,7 @@ class CommandType(Enum):
     WEATHER = "weather"
     EMAIL = "email"
     UNKNOWN = "unknown"
+    MUSIC = "music"
 
 class CommandDetector:
     """Klasa do wykrywania i przetwarzania poleceń w zapytaniach użytkownika."""
@@ -35,12 +36,25 @@ class CommandDetector:
                 r"(?:wyślij|napisz)(?:\s+(?:nowy|nowego))?\s+(?:email|mail|wiadomość)(?:\s+do)?",
                 r"(?:stwórz|utwórz)(?:\s+(?:nowy|nowego))?\s+(?:email|mail|wiadomość)(?:\s+do)?",
             ],
+            CommandType.MUSIC: [
+            r"(?:zatrzymaj|pauza|wstrzymaj|stop)(?:\s+(?:muzykę|odtwarzanie|spotify|utwór|piosenkę))?",
+            r"(?:wznów|kontynuuj|odtwórz|play|graj)(?:\s+(?:muzykę|odtwarzanie|spotify|utwór|piosenkę))?",
+            r"(?:następn(?:y|a)|kolejn(?:y|a))(?:\s+(?:utwór|piosenk(?:a|ę)|utwor))?",
+            r"(?:poprzedni(?:y|a)|wcześniejsz(?:y|a))(?:\s+(?:utwór|piosenk(?:a|ę)|utwor))?",
+
+            r"(?:zwiększ|podgłośnij|podnieś)(?:\s+(?:głośność|volume))?",
+            r"(?:zmniejsz|ścisz|zmniejsz)(?:\s+(?:głośność|volume))?",
+            r"(?:ustaw)(?:\s+(?:głośność|volume))(?:\s+na)?(?:\s+(\d{1,3})(?:\s*%|\s+procent)?)?",
+
+            r"(?:włącz|odtwórz|graj)(?:\s+piosenkę|utwór)?(?:\s+pod\s+tytułem)?(?:\s+(.+))?(?:\s+(?:na|w)\s+spotify)?",
+            r"(?:włącz|odtwórz|graj)(?:\s+(?:muzykę|utwory|piosenki))(?:\s+(?:wykonawcy|artysty))?(?:\s+(.+))?(?:\s+(?:na|w)\s+spotify)?",
+            r"(?:włącz|odtwórz|graj)(?:\s+(?:album|płytę)(?:\s+pod\s+tytułem)?(?:\s+(.+)))?(?:\s+(?:na|w)\s+spotify)?",
+            r"(?:włącz|odtwórz|graj)(?:\s+(?:playlistę|playlist)(?:\s+pod\s+nazwą)?(?:\s+(.+)))?(?:\s+(?:na|w)\s+spotify)?",
+        ],
         }
         
     def detect_command(self, text: str) -> Tuple[bool, Optional[CommandType], Dict[str, Any]]:
-        """
-        Wykrywa polecenia w tekście użytkownika.
-        """
+        """ Wykrywa polecenia w tekście użytkownika. """
         text = text.lower().strip()
         
         logger.info(f"Analizowanie tekstu pod kątem poleceń: '{text}'")
@@ -123,13 +137,69 @@ class CommandDetector:
             location_match = re.search(r'pogoda(?:\s+w|dla)?\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)', text)
             if location_match:
                 params['location'] = location_match.group(1).strip()
+        elif cmd_type == CommandType.MUSIC:
+            if re.search(r"(?:zatrzymaj|pauza|wstrzymaj|stop)", text, re.IGNORECASE):
+                params["action"] = "pause"
+            elif re.search(r"(?:wznów|kontynuuj|odtwórz|play|graj)$", text, re.IGNORECASE):
+                params["action"] = "play"
+            elif re.search(r"(?:następn(?:y|a)|kolejn(?:y|a))", text, re.IGNORECASE):
+                params["action"] = "next"
+            elif re.search(r"(?:poprzedni(?:y|a)|wcześniejsz(?:y|a))", text, re.IGNORECASE):
+                params["action"] = "previous"
+                
+            volume_up = re.search(r"(?:zwiększ|podgłośnij|podnieś)", text, re.IGNORECASE)
+            volume_down = re.search(r"(?:zmniejsz|ścisz)", text, re.IGNORECASE)
+            volume_set = re.search(r"(?:ustaw)(?:\s+(?:głośność|volume))(?:\s+na)?(?:\s+(\d{1,3})(?:\s*%|\s+procent)?)?", text, re.IGNORECASE)
             
+            if volume_up:
+                params["action"] = "volume_up"
+                volume_value = re.search(r"(?:o|do)(?:\s+|)(\d{1,3})(?:\s*%|\s+procent)?", text, re.IGNORECASE)
+                if volume_value:
+                    params["value"] = volume_value.group(1)
+                    
+            elif volume_down:
+                params["action"] = "volume_down"
+                volume_value = re.search(r"(?:o|do)(?:\s+|)(\d{1,3})(?:\s*%|\s+procent)?", text, re.IGNORECASE)
+                if volume_value:
+                    params["value"] = volume_value.group(1)
+                    
+            elif volume_set:
+                params["action"] = "volume_set"
+                if volume_set.group(1):
+                    params["value"] = volume_set.group(1)
+                else:
+                    params["value"] = "50"  # Domyślna wartość głośności
+                
+            search_patterns = [
+                r"(?:włącz|odtwórz|graj)(?:\s+piosenkę|utwór)?(?:\s+pod\s+tytułem)?(?:\s+(.+))(?:\s+(?:na|w)\s+spotify)?",
+                r"(?:włącz|odtwórz|graj)(?:\s+(?:muzykę|utwory|piosenki))(?:\s+(?:wykonawcy|artysty))?(?:\s+(.+))(?:\s+(?:na|w)\s+spotify)?",
+                r"(?:włącz|odtwórz|graj)(?:\s+(?:album|płytę)(?:\s+pod\s+tytułem)?(?:\s+(.+)))(?:\s+(?:na|w)\s+spotify)?",
+                r"(?:włącz|odtwórz|graj)(?:\s+(?:playlistę|playlist)(?:\s+pod\s+nazwą)?(?:\s+(.+)))(?:\s+(?:na|w)\s+spotify)?",
+            ]
+            
+            if "action" not in params and any(re.search(pattern, text, re.IGNORECASE) for pattern in search_patterns):
+                params["action"] = "search"
+                if re.search(r"(?:piosenkę|utwór)", text, re.IGNORECASE):
+                    params["search_type"] = "track"
+                elif re.search(r"(?:wykonawcy|artysty)", text, re.IGNORECASE):
+                    params["search_type"] = "artist"
+                elif re.search(r"(?:album|płytę)", text, re.IGNORECASE):
+                    params["search_type"] = "album"
+                elif re.search(r"(?:playlistę|playlist)", text, re.IGNORECASE):
+                    params["search_type"] = "playlist"
+                else:
+                    params["search_type"] = "track"
+                
+                for pattern in search_patterns:
+                    match = re.search(pattern, text, re.IGNORECASE)
+                    if match and match.group(1):
+                        params["query"] = match.group(1).strip()
+                        break
+                
         return params
     
     def execute_command(self, cmd_type: CommandType, params: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Zwraca informacje o wykrytym poleceniu w formacie dla ESP32.
-        """
+        """ Zwraca informacje o wykrytym poleceniu w formacie dla ESP32. """
         
         result = {
             "command_type": cmd_type.value if cmd_type else "unknown",
@@ -151,11 +221,15 @@ class CommandDetector:
         elif cmd_type == CommandType.EMAIL:
             result["description"] = "Operacja na email"
             result["esp32_handler"] = "email_handler"
-        
+        elif cmd_type == CommandType.MUSIC:
+            result["description"] = "Kontrola odtwarzania muzyki"
+            result["esp32_handler"] = "music_handler"
+            
         user_message = self._generate_confirmation_message(cmd_type, params)
         result["user_message"] = user_message
             
         return result
+    
     def _generate_confirmation_message(self, cmd_type: CommandType, params: Dict[str, Any]) -> str:
         """Generuje komunikat potwierdzający dla użytkownika."""
         if cmd_type == CommandType.CALENDAR:
@@ -187,5 +261,55 @@ class CommandDetector:
             
         elif cmd_type == CommandType.EMAIL:
             return "Wykryłam polecenie związane z obsługą email."
+        
+        elif cmd_type == CommandType.MUSIC:
+            action = params.get('action', '')
             
+            if action == "pause":
+                return "Wykryłam polecenie zatrzymania odtwarzania muzyki."
+            
+            elif action == "play":
+                return "Wykryłam polecenie wznowienia odtwarzania muzyki."
+            
+            elif action == "next":
+                return "Wykryłam polecenie przejścia do następnego utworu."
+            
+            elif action == "previous":
+                return "Wykryłam polecenie przejścia do poprzedniego utworu."
+            
+            elif action == "volume_up":
+                value = params.get('value', '')
+                if value:
+                    return f"Wykryłam polecenie zwiększenia głośności o {value}%."
+                else:
+                    return "Wykryłam polecenie zwiększenia głośności."
+            
+            elif action == "volume_down":
+                value = params.get('value', '')
+                if value:
+                    return f"Wykryłam polecenie zmniejszenia głośności o {value}%."
+                else:
+                    return "Wykryłam polecenie zmniejszenia głośności."
+            
+            elif action == "volume_set":
+                value = params.get('value', '50')
+                return f"Wykryłam polecenie ustawienia głośności na {value}%."
+            
+            elif action == "search":
+                search_type = params.get('search_type', 'track')
+                query = params.get('query', '')
+                
+                if search_type == "track":
+                    return f"Wykryłam polecenie wyszukania i odtworzenia utworu \"{query}\"."
+                elif search_type == "artist":
+                    return f"Wykryłam polecenie wyszukania i odtworzenia muzyki artysty \"{query}\"."
+                elif search_type == "album":
+                    return f"Wykryłam polecenie wyszukania i odtworzenia albumu \"{query}\"."
+                elif search_type == "playlist":
+                    return f"Wykryłam polecenie wyszukania i odtworzenia playlisty \"{query}\"."
+                else:
+                    return f"Wykryłam polecenie wyszukania muzyki \"{query}\"."
+            
+            return "Wykryłam polecenie kontroli muzyki."
+        
         return "Wykryłam polecenie, ale nie rozpoznaję jego dokładnego typu."

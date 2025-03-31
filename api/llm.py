@@ -280,7 +280,7 @@ async def test_gpu():
         
         # Test podstawowych operacji
         try:
-            size = 2000  # Rozmiar macierzy
+            size = 2000 # Rozmiar macierzy
             cpu_tensor = torch.randn(size, size)
             dml_tensor = cpu_tensor.to(dml)
             
@@ -313,36 +313,3 @@ async def test_gpu():
     except Exception as e:
         import traceback
         return {"error": f"Ogólny błąd: {str(e)}\n{traceback.format_exc()}"}
-    
-    
-@router.post("/test_command_detection")
-async def test_command_detection(request: GenerateRequest):
-    """Testuje wykrywanie poleceń bez uruchamiania modelu LLM."""
-    try:
-        logger.info(f"Testowanie wykrywania poleceń dla: '{request.prompt}'")
-        
-        command_detector = CommandDetector()
-        is_command, cmd_type, params = command_detector.detect_command(request.prompt)
-        
-        if is_command:
-            command_info = command_detector.execute_command(cmd_type, params)
-            logger.info(f"Wykryto polecenie: {cmd_type.value if cmd_type else 'nieznane'}")
-            logger.info(f"Parametry: {params}")
-            return {
-                "detected": True,
-                "command_type": cmd_type.value if cmd_type else "unknown",
-                "parameters": params,
-                "esp32_info": command_info,
-                "user_message": command_info["user_message"]
-            }
-        else:
-            logger.info("Nie wykryto polecenia")
-            return {
-                "detected": False,
-                "prompt": request.prompt
-            }
-    except Exception as e:
-        import traceback
-        error_details = str(e) + "\n" + traceback.format_exc()
-        logger.error(f"Błąd testowania poleceń: {error_details}")
-        return {"error": error_details}
