@@ -6,9 +6,10 @@ pytest
 python-multipart
 pyaudio 
 vosk
-TTS
 torch
 transformers
 accelerate
-sentencepiece
-nvidia-smi
+requests
+aiofiles
+tqdm
+accelerate
