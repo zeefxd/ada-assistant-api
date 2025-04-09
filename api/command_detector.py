@@ -38,7 +38,7 @@ class CommandDetector:
             ],
             CommandType.MUSIC: [
             r"(?:zatrzymaj|pauza|wstrzymaj|stop)(?:\s+(?:muzykę|odtwarzanie|spotify|utwór|piosenkę))?",
-            r"(?:wznów|kontynuuj|odtwórz|play|graj)(?:\s+(?:muzykę|odtwarzanie|spotify|utwór|piosenkę))?",
+            r"(?:wznów|kontynuuj|odtwórz|play|graj|puść)(?:\s+(?:muzykę|odtwarzanie|spotify|utwór|piosenkę))?",
             r"(?:następn(?:y|a)|kolejn(?:y|a))(?:\s+(?:utwór|piosenk(?:a|ę)|utwor))?",
             r"(?:poprzedni(?:y|a)|wcześniejsz(?:y|a))(?:\s+(?:utwór|piosenk(?:a|ę)|utwor))?",
 
@@ -46,10 +46,10 @@ class CommandDetector:
             r"(?:zmniejsz|ścisz|zmniejsz)(?:\s+(?:głośność|volume))?",
             r"(?:ustaw)(?:\s+(?:głośność|volume))(?:\s+na)?(?:\s+(\d{1,3})(?:\s*%|\s+procent)?)?",
 
-            r"(?:włącz|odtwórz|graj)(?:\s+piosenkę|utwór)?(?:\s+pod\s+tytułem)?(?:\s+(.+))?(?:\s+(?:na|w)\s+spotify)?",
-            r"(?:włącz|odtwórz|graj)(?:\s+(?:muzykę|utwory|piosenki))(?:\s+(?:wykonawcy|artysty))?(?:\s+(.+))?(?:\s+(?:na|w)\s+spotify)?",
-            r"(?:włącz|odtwórz|graj)(?:\s+(?:album|płytę)(?:\s+pod\s+tytułem)?(?:\s+(.+)))?(?:\s+(?:na|w)\s+spotify)?",
-            r"(?:włącz|odtwórz|graj)(?:\s+(?:playlistę|playlist)(?:\s+pod\s+nazwą)?(?:\s+(.+)))?(?:\s+(?:na|w)\s+spotify)?",
+            r"(?:włącz|odtwórz|graj|puść)(?:\s+piosenkę|utwór)?(?:\s+pod\s+tytułem)?(?:\s+(.+))?(?:\s+(?:na|w)\s+spotify)?",
+            r"(?:włącz|odtwórz|graj|puść)(?:\s+(?:muzykę|utwory|piosenki))(?:\s+(?:wykonawcy|artysty))?(?:\s+(.+))?(?:\s+(?:na|w)\s+spotify)?",
+            r"(?:włącz|odtwórz|graj|puść)(?:\s+(?:album|płytę)(?:\s+pod\s+tytułem)?(?:\s+(.+)))?(?:\s+(?:na|w)\s+spotify)?",
+            r"(?:włącz|odtwórz|graj|puść)(?:\s+(?:playlistę|playlist)(?:\s+pod\s+nazwą)?(?:\s+(.+)))?(?:\s+(?:na|w)\s+spotify)?",
         ],
         }
         
@@ -140,7 +140,7 @@ class CommandDetector:
         elif cmd_type == CommandType.MUSIC:
             if re.search(r"(?:zatrzymaj|pauza|wstrzymaj|stop)", text, re.IGNORECASE):
                 params["action"] = "pause"
-            elif re.search(r"(?:wznów|kontynuuj|odtwórz|play|graj)$", text, re.IGNORECASE):
+            elif re.search(r"(?:wznów|kontynuuj|odtwórz|play|graj|puść)$", text, re.IGNORECASE):
                 params["action"] = "play"
             elif re.search(r"(?:następn(?:y|a)|kolejn(?:y|a))", text, re.IGNORECASE):
                 params["action"] = "next"
@@ -171,10 +171,10 @@ class CommandDetector:
                     params["value"] = "50"  # Domyślna wartość głośności
                 
             search_patterns = [
-                r"(?:włącz|odtwórz|graj)(?:\s+piosenkę|utwór)?(?:\s+pod\s+tytułem)?(?:\s+(.+))(?:\s+(?:na|w)\s+spotify)?",
-                r"(?:włącz|odtwórz|graj)(?:\s+(?:muzykę|utwory|piosenki))(?:\s+(?:wykonawcy|artysty))?(?:\s+(.+))(?:\s+(?:na|w)\s+spotify)?",
-                r"(?:włącz|odtwórz|graj)(?:\s+(?:album|płytę)(?:\s+pod\s+tytułem)?(?:\s+(.+)))(?:\s+(?:na|w)\s+spotify)?",
-                r"(?:włącz|odtwórz|graj)(?:\s+(?:playlistę|playlist)(?:\s+pod\s+nazwą)?(?:\s+(.+)))(?:\s+(?:na|w)\s+spotify)?",
+                r"(?:włącz|odtwórz|graj|puść)(?:\s+piosenkę|utwór)?(?:\s+pod\s+tytułem)?(?:\s+(.+))(?:\s+(?:na|w)\s+spotify)?",
+                r"(?:włącz|odtwórz|graj|puść)(?:\s+(?:muzykę|utwory|piosenki))(?:\s+(?:wykonawcy|artysty))?(?:\s+(.+))(?:\s+(?:na|w)\s+spotify)?",
+                r"(?:włącz|odtwórz|graj|puść)(?:\s+(?:album|płytę)(?:\s+pod\s+tytułem)?(?:\s+(.+)))(?:\s+(?:na|w)\s+spotify)?",
+                r"(?:włącz|odtwórz|graj|puść)(?:\s+(?:playlistę|playlist)(?:\s+pod\s+nazwą)?(?:\s+(.+)))(?:\s+(?:na|w)\s+spotify)?",
             ]
             
             if "action" not in params and any(re.search(pattern, text, re.IGNORECASE) for pattern in search_patterns):
@@ -300,7 +300,7 @@ class CommandDetector:
                 query = params.get('query', '')
                 
                 if search_type == "track":
-                    return f"Wykryłam polecenie wyszukania i odtworzenia utworu \"{query}\"."
+                    return f"W porządku, utwór {query}, odtwarzam przez wbudowany głośnik."
                 elif search_type == "artist":
                     return f"Wykryłam polecenie wyszukania i odtworzenia muzyki artysty \"{query}\"."
                 elif search_type == "album":
