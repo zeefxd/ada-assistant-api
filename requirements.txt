@@ -7,3 +7,5 @@ ollama
 vosk
 numpy
 openai-whisper
+pyinstrument
+faster-whisper
