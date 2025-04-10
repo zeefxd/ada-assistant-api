@@ -38,8 +38,6 @@ def download_model(model_name, root):
     Returns:
         str: Path to the downloaded model
     """
-    # Faster-whisper handles model downloading automatically
-    # This function is kept for compatibility
     logger.info(f"Faster-whisper will download model {model_name} automatically if needed")
     return str(root)
 
@@ -140,7 +138,6 @@ def get_model(model_name):
     Returns:
         WhisperModel: Loaded Whisper model
     """
-    # Determine device and compute type
     device = "cuda" if is_gpu_available() else "cpu"
     compute_type = "float16" if device == "cuda" else "int8"
     

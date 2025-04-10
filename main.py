@@ -16,7 +16,6 @@ class PyInstrumentMiddleWare(BaseHTTPMiddleware):
         profiler.start()
         response = await call_next(request)
         profiler.stop()
-        # Write result to html file
         profiler.write_html("profile.html")
         return response
 
