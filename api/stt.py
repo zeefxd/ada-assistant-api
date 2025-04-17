@@ -3,12 +3,15 @@ import os
 import requests
 import logging
 import traceback
-import whisper
 import subprocess
 import zipfile
 import shutil
 import sys
 import torch
+import time
+import multiprocessing
+
+from faster_whisper import WhisperModel
 
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException
@@ -18,7 +21,7 @@ logger = logging.getLogger("stt")
 
 router = APIRouter()
 
-# Modele do wyboru: "tiny", "base", "small", "medium", "large"
+# Models to choose from: "tiny", "base", "small", "medium", "large-v2, "large-v3", "large-v3-turbo"
 whisper_model_size = "medium"
 MODEL_DIR = Path(__file__).parent.parent / "model"
 MODEL_DIR.mkdir(exist_ok=True)
@@ -35,34 +38,8 @@ def download_model(model_name, root):
     Returns:
         str: Path to the downloaded model
     """
-    
-    model_path = os.path.join(root, f"{model_name}.pt")
-    
-    if os.path.exists(model_path):
-        logger.info(f"Model already exists: {model_path}")
-        return model_path
-    
-    hf_models = {
-        "tiny": "https://huggingface.co/openai/whisper-tiny/resolve/main/pytorch_model.bin",
-        "base": "https://huggingface.co/openai/whisper-base/resolve/main/pytorch_model.bin",
-        "small": "https://huggingface.co/openai/whisper-small/resolve/main/pytorch_model.bin",
-        "medium": "https://huggingface.co/openai/whisper-medium/resolve/main/pytorch_model.bin",
-        "large": "https://huggingface.co/openai/whisper-large-v2/resolve/main/pytorch_model.bin"
-    }
-    
-    if model_name not in hf_models:
-        raise ValueError(f"Unknown model: {model_name}. Available models: {list(hf_models.keys())}")
-    
-    url = hf_models[model_name]
-    logger.info(f"Downloading model {model_name} from Hugging Face to {model_path}...")
-    
-    with requests.get(url, stream=True) as r:
-        r.raise_for_status()
-        with open(model_path, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-    
-    return model_path
+    logger.info(f"Faster-whisper will download model {model_name} automatically if needed")
+    return str(root)
 
 def is_ffmpeg_installed():
     """
@@ -153,45 +130,65 @@ def is_gpu_available():
 
 def get_model(model_name):
     """
-    Loads Whisper model from a custom folder instead of default cache location.
+    Loads Whisper model using faster-whisper implementation.
     
     Args:
         model_name (str): Name of the model to load
     
     Returns:
-        whisper.Model: Loaded Whisper model
+        WhisperModel: Loaded Whisper model
     """
-    model_path = MODEL_DIR / f"{model_name}.pt"
-    
-    if not model_path.exists():
-        download_model(model_name, MODEL_DIR)
-    
     device = "cuda" if is_gpu_available() else "cpu"
-    if device == "cuda":
-        logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
-    else:
-        logger.info("GPU is not available, using CPU")
+    compute_type = "float16" if device == "cuda" else "int8"
     
-    return whisper.load_model(model_name, download_root=MODEL_DIR, device=device)
+    cpu_count = multiprocessing.cpu_count()
+    optimal_workers = max(1, cpu_count - 1)
+    
+    if device == "cuda":
+        logger.info(f"Using GPU: {torch.cuda.get_device_name(0)} with {compute_type} precision")
+    else:
+        logger.info(f"GPU is not available, using CPU with {compute_type} quantization")
+    
+    download_root = str(MODEL_DIR)
+    
+    if "/" in model_name:
+        display_name = model_name.split("/")[-1]
+        logger.info(f"Using HuggingFace model: {model_name}")
+    else:
+        display_name = model_name
+    
+    logger.info(f"Loading model: {display_name}")
+    model = WhisperModel(
+        model_name, 
+        device=device, 
+        compute_type=compute_type, 
+        download_root=download_root,
+        num_workers=optimal_workers,
+        cpu_threads=optimal_workers
+    )
+    
+    return model
 
 @router.post("/transcribe")
 async def transcribe_audio(
     file: UploadFile = File(default=...)
 ):
     """
-    Transcribes audio to text using the Whisper model.
+    Transcribes audio to text using the Faster-Whisper model.
     Automatically handles mixed languages in a single recording.
     
     Args:
         file (UploadFile): Audio file to transcribe
     
     Returns:
-        dict: Contains transcribed text and detected language
+        dict: Contains transcribed text, detected language, and processing time
     """
+    start_total = time.time()
+    
     try:
         ensure_ffmpeg()
         
-        logger.info(f"Initializing Whisper model ({whisper_model_size})...")
+        logger.info(f"Initializing Faster-Whisper model ({whisper_model_size})...")
         model = get_model(whisper_model_size)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
@@ -217,25 +214,38 @@ async def transcribe_audio(
             Nigdy nie tłumacz fragmentów w innych językach.
 
             Przykłady:
-            "Puść Jigsaw falling into place Radiohead",
-            "Dodaj spotkanie na Google Calendar na jutro"
+            Puść Jigsaw falling into place Radiohead
+            Dodaj spotkanie na Google Calendar na jutro
             """
-            use_fp16 = is_gpu_available()
+
+            start_transcription = time.time()
             
-            result = model.transcribe(
+            segments, info = model.transcribe(
                 temp_path,
                 task="transcribe",
-                language=None,
+                language=None, 
                 initial_prompt=assistant_prompt,
                 temperature=0.0,
-                best_of=5,
-                fp16=use_fp16
+                beam_size= 1,
+                vad_filter=True,  
+                vad_parameters=dict(min_silence_duration_ms=500) 
             )
+
+            transcription_time = time.time() - start_transcription
+            logger.info(f"Transcription took {transcription_time:.2f} seconds")
             
-            detected_language = result.get("language", "unknown")
+            full_text = ""
+            for segment in segments:
+                full_text += segment.text
+            
+            detected_language = info.language
+            total_time = time.time() - start_total
+            
             return {
-                "text": result["text"].strip(), 
-                "detected_language": detected_language
+                "text": full_text.strip(),
+                "detected_language": detected_language,
+                "transcription_time": round(transcription_time, 2),
+                "total_time": round(total_time, 2)
             }
             
         finally:
