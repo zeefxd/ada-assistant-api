@@ -1,111 +1,145 @@
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
 import tempfile
 import os
-import subprocess
-from pathlib import Path
-import requests
-import shutil
 import traceback
 import logging
 import time
+import torch
+
+import TTS.utils.io as tts_io
+
+from TTS.api import TTS
+from pathlib import Path
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+
+original_load_fsspec = tts_io.load_fsspec
+
+def patched_load_fsspec(filepath, **kwargs):
+    """
+    Patched version of load_fsspec to ensure weights_only parameter is included.
+    
+    Args:
+        filepath (str): Path to the file
+        **kwargs: Additional arguments
+    
+    Returns:
+        Object loaded from the file
+    """
+    if "weights_only" not in kwargs:
+        kwargs["weights_only"] = False
+    return original_load_fsspec(filepath, **kwargs)
+
+tts_io.load_fsspec = patched_load_fsspec
+
+try:
+    from TTS.tts.configs.xtts_config import XttsConfig
+    torch.serialization.add_safe_globals([XttsConfig])
+except ImportError:
+    pass
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("tts")
+logger = logging.getLogger("polish_tts")
 
 router = APIRouter()
 
-class TextToSpeech(BaseModel):
+class PolishTextToSpeech(BaseModel):
     """
     Data model for text-to-speech request.
     
     Args:
         text (str): Text to synthesize into speech
-        language (str): Language code (default "pl")
-        speed (float): Speech rate in range 0.5-2.0
-        volume (float): Volume level in range 0.1-5.0
     """
-    
     text: str
-    language: str = "pl"
-    speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech rate (0.5-2.0)")
-    volume: float = Field(default=1.0, ge=0.1, le=5.0, description="Volume level (0.1-5.0)")
-    
-# https://github.com/rhasspy/piper
-models_dir = Path(__file__).parent.parent / "model" / "piper"
-model_name = "pl_PL-gosia-medium" 
 
-bin_dir = Path(__file__).parent.parent / "bin"  
-piper_exe = bin_dir / "piper.exe"  
+models_dir = Path(__file__).parent.parent / "model" / "xtts"
+models_dir.mkdir(parents=True, exist_ok=True)
 
-def ensure_piper_model():
+assets_dir = Path(__file__).parent.parent / "assets"
+assets_dir.mkdir(parents=True, exist_ok=True)
+
+POLISH_FEMALE_VOICE = assets_dir / "polish_female_voice.wav"
+
+tts_model = None
+
+def load_xtts_model():
     """
-    Downloads the Piper model if it doesn't exist in the file system.
+    Loads the XTTS-v2 model if not already loaded.
     
     Args:
         None
-        
+    
     Returns:
-        tuple: Tuple (model_path, config_path) containing paths to model files
-        
+        TTS: Loaded TTS model instance
+    
     Raises:
-        HTTPException: When model download fails
+        HTTPException: If model loading fails
     """
+    global tts_model
     
-    models_dir.mkdir(parents=True, exist_ok=True)
-    
-    model_path = models_dir / f"{model_name}.onnx"
-    config_path = models_dir / f"{model_name}.onnx.json"
-    
-    if not model_path.exists() or not config_path.exists():
+    if tts_model is None:
         try:
-            print(f"Downloading Piper model {model_name}...")
+            logger.info("Loading XTTS-v2 model...")
+            start_time = time.time()
             
-            model_path.parent.mkdir(parents=True, exist_ok=True)
+            tts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=True)
             
-            base_url = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
+            logger.info(f"XTTS-v2 model loaded in {time.time() - start_time:.2f}s")
             
-            model_url = f"{base_url}/pl/pl_PL/gosia/medium/{model_name}.onnx"
-            config_url = f"{base_url}/pl/pl_PL/gosia/medium/{model_name}.onnx.json"
+            ensure_voice_sample()
             
-            print(f"Downloading model from: {model_url}")
-            print(f"Downloading config from: {config_url}")
-            
-            for url, path in [(model_url, model_path), (config_url, config_path)]:
-                print(f"Downloading {url}...")
-                response = requests.get(url, stream=True)
-                response.raise_for_status()
-                with open(path, 'wb') as file:
-                    shutil.copyfileobj(response.raw, file)
-            
-            print(f"Piper model {model_name} downloaded successfully!")
         except Exception as e:
             error_details = str(e) + "\n" + traceback.format_exc()
+            logger.error(f"Failed to load XTTS model: {error_details}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Cannot download Piper model: {error_details}"
+                detail=f"Cannot load XTTS model: {str(e)}"
             )
     
-    return model_path, config_path
+    return tts_model
 
-@router.post("/synthesize")
-async def synthesize_speech(request: TextToSpeech):
+def ensure_voice_sample():
     """
-    Generates speech from text using Piper TTS.
+    Makes sure we have a voice sample.
     
     Args:
-        request (TextToSpeech): Object containing text and synthesis parameters
-        
-    Returns:
-        FileResponse: WAV audio file containing synthesized speech
-        
-    Raises:
-        HTTPException: When speech generation fails
-    """
+        None
     
+    Returns:
+        None
+    
+    Raises:
+        FileNotFoundError: If voice sample file is missing
+    """
+    if not POLISH_FEMALE_VOICE.exists():
+        logger.info("Voice sample missing. Please add a female voice file.")
+        
+        with open(POLISH_FEMALE_VOICE.with_suffix('.txt'), 'w', encoding='utf-8') as f:
+            f.write("Place a WAV file (44.1kHz, min. 3 seconds) with a Polish female voice sample here.\n")
+            f.write("File name should be: polish_female_voice.wav")
+            
+        raise FileNotFoundError(
+            f"Missing voice sample file: {POLISH_FEMALE_VOICE}. "
+            "Please add a WAV file with a female Polish voice."
+        )
+
+
+@router.post("/synthesize", response_model=FileResponse)
+async def generate_polish_speech(request: PolishTextToSpeech):
+    """
+    Generates speech.
+    
+    Args:
+        request (PolishTextToSpeech): Request object containing the text to synthesize
+    
+    Returns:
+        FileResponse: Generated audio file
+    
+    Raises:
+        HTTPException: If speech generation fails
+    """
     try:
-        model_path, config_path = ensure_piper_model()
+        model = load_xtts_model()
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
             output_path = temp_audio.name
@@ -114,44 +148,21 @@ async def synthesize_speech(request: TextToSpeech):
         start_time = time.time()
         
         try:
-            # Call piper.exe with input text via stdin
-            cmd = [
-                str(piper_exe),
-                "--model", str(model_path),
-                "--config", str(config_path),
-                "--output_file", output_path,
-                "--speaker", "0",       
-                "--speed", str(request.speed),    
-                "--volume", str(request.volume)   
-            ]
-            
-            logger.info(f"Running: {' '.join(cmd)}")
-            
-            process = subprocess.run(
-                cmd, 
-                input=request.text,
-                text=True,           
-                check=True,          
-                timeout=30,          
-                capture_output=True,
-                encoding='utf-8'
+            model.tts_to_file(
+                text=request.text,
+                file_path=output_path,
+                speaker_wav=str(POLISH_FEMALE_VOICE),
+                language="pl"
             )
                 
-            logger.info(f"Generated speech via Piper in {time.time() - start_time:.2f}s")
-            
-            if process.stdout:
-                logger.info(f"Piper stdout: {process.stdout}")
-            
+            logger.info(f"Speech generated in {time.time() - start_time:.2f}s")
+                
             if os.path.getsize(output_path) < 100:
                 raise Exception("Generated audio file is too small or empty")
                 
-        except subprocess.TimeoutExpired as e:
-            logger.error(f"Timeout during speech generation: {str(e)}")
-            raise Exception(f"Execution timeout (30s) while generating speech")
-            
         except Exception as e:
             logger.error(f"Error during speech generation: {str(e)}")
-            raise Exception(f"Error during speech generation: {str(e)}")
+            raise
         
         return FileResponse(
             output_path,
@@ -160,5 +171,5 @@ async def synthesize_speech(request: TextToSpeech):
         )
     except Exception as e:
         error_details = str(e) + "\n" + traceback.format_exc()
-        logger.error(f"Error: {error_details}")
-        raise HTTPException(status_code=500, detail=f"Error: {error_details}")
+        logger.error(f"Błąd: {error_details}")
+        raise HTTPException(status_code=500, detail=f"Błąd: {str(e)}")
