@@ -4,8 +4,7 @@ pydantic
 python-dotenv
 requests
 ollama
-vosk
 numpy
-openai-whisper
 pyinstrument
-faster-whisper
+python-multipart
+TTS
