@@ -1,0 +1,37 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          # Use the GH_TOKEN for authentication
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install mkdocs mkdocs-material pdoc3 mkdocstrings
+          pip install -r requirements.txt
+
+      - name: Build MkDocs
+        run: |
+          mkdocs gh-deploy --force --remote-name origin --remote-branch gh-pages
+
+      - name: Build API docs
+        run: |
+          pdoc --html --output-dir docs/api src/

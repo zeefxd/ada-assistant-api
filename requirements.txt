@@ -8,3 +8,8 @@ numpy
 pyinstrument
 python-multipart
 TTS
+mkdocs
+mkdocs-material
+pymdown-extensions
+mkdocstrings-python
+mkdocs-swagger-ui-tag
