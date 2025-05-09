@@ -124,7 +124,7 @@ def ensure_voice_sample():
         )
 
 
-@router.post("/synthesize", response_model=FileResponse)
+@router.post("/synthesize")
 async def generate_polish_speech(request: PolishTextToSpeech):
     """
     Generates speech.
