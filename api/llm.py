@@ -7,11 +7,12 @@ import traceback
 import ollama
 import re
     
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from pathlib import Path
 from dotenv import load_dotenv
 from api.command_detector import CommandDetector, CommandType
+from api.spotify_handler import SpotifyHandler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -86,12 +87,22 @@ def get_model():
 
 
 @router.post("/generate")
-async def generate_response(request: GenerateRequest):
+async def generate_response(
+    request: GenerateRequest, 
+    spotify_token: str = Header(None, alias="spotify-token"),
+    x_spotify_token: str = Header(None, alias="x-spotify-token"),
+    authorization: str = Header(None),
+    spotify_auth: str = Header(None, alias="spotify-auth")
+):
     """
     Generates a response based on the provided prompt, handling both commands and LLM generation.
     
     Args:
         request (GenerateRequest): The request object containing the user prompt
+        spotify_token (str): Optional Spotify access token (using kebab-case header)
+        x_spotify_token (str): Optional Spotify access token (using X- prefix header)
+        authorization (str): Optional Authorization header that might contain the token
+        spotify_auth (str): Alternative Spotify auth header
         
     Returns:
         dict: Response data containing either command results or LLM-generated text
@@ -102,18 +113,51 @@ async def generate_response(request: GenerateRequest):
     try:
         logger.info(f"Received request: '{request.prompt}'")
         
+        effective_token = None
+        if x_spotify_token:
+            logger.info("Using X-Spotify-Token header")
+            effective_token = x_spotify_token
+        elif spotify_token:
+            logger.info("Using spotify-token header")
+            effective_token = spotify_token
+        elif spotify_auth:
+            logger.info("Using spotify-auth header")
+            effective_token = spotify_auth
+        elif authorization and authorization.startswith("Bearer ") and "spotify" in request.prompt.lower():
+            logger.info("Using Authorization Bearer token as Spotify token")
+            effective_token = authorization.replace("Bearer ", "")
+        
+        if effective_token:
+            token_preview = effective_token[:10] + "..." if len(effective_token) > 10 else effective_token
+            logger.info(f"Received Spotify token: {token_preview}")
+        
         command_detector = CommandDetector()
         is_command, cmd_type, params = command_detector.detect_command(request.prompt)
         
         logger.info(f"Command detection results: is_command={is_command}, cmd_type={cmd_type}, params={params}")
         
-        if is_command:
+        if is_command and cmd_type == CommandType.MUSIC:
             command_info = command_detector.execute_command(cmd_type, params)
-            logger.info(f"Command detected: {cmd_type.value if cmd_type else 'unknown'}")
-            logger.info(f"Command parameters: {params}")
+            logger.info(f"Music command detected with parameters: {params}")
+            
+            if effective_token:
+                spotify_handler = SpotifyHandler(access_token=effective_token)
+                spotify_result = await spotify_handler.execute_command(params)
+                
+                logger.info(f"Spotify command result: {spotify_result}")
+                
+                if "message" in spotify_result:
+                    command_info["user_message"] = spotify_result["message"]
+                
+                command_info["spotify_result"] = spotify_result
+            else:
+                logger.warning("Spotify command detected but no Spotify token provided")
+                command_info["user_message"] = "Aby sterować odtwarzaczem muzyki, musisz najpierw połączyć konto Spotify w aplikacji."
+                command_info["spotify_result"] = {"success": False, "message": "No Spotify token provided"}
           
             return {
                 "is_command": True,
+                "command_type": "music",
                 "command_data": command_info,
                 "response": clean_text_for_tts(command_info["user_message"])
             }
