@@ -25,21 +25,23 @@ class GenerateRequest(BaseModel):
     prompt: str
 
 model_name = "gemma3:4b"
-            
-def get_model():
+model_initialized = False
+model_available = False
+
+async def initialize_llm():
     """
-    Checks if the specified model is available in Ollama and downloads it if it doesn't exist.
+    Initializes the LLM service by checking for model availability, downloading if needed,
+    and performing a warm-up inference to fully load the model into memory.
+    Called at application startup rather than during endpoint calls.
     
-    Args:
-        None
-        
     Returns:
-        bool: True if the model is available or was successfully downloaded
-        
-    Raises:
-        HTTPException: When model download fails or Ollama connection fails
+        bool: True if initialization was successful
     """
+    global model_initialized, model_available
+    
     try:
+        logger.info(f"Initializing LLM service with model: {model_name}")
+        
         models = ollama.list()
         logger.debug(f"Response from ollama.list(): {models}")
         
@@ -69,21 +71,69 @@ def get_model():
                 logger.info(f"Downloading model {model_name}. This may take a while...")
                 response = ollama.pull(model_name)
                 logger.info(f"Model {model_name} downloaded successfully!")
-                return True
+                model_available = True
             except Exception as pull_error:
                 logger.error(f"Failed to download model {model_name}: {str(pull_error)}")
-                raise HTTPException(
-                    status_code=500, 
-                    detail=f"Error downloading model {model_name}. Try downloading it manually: ollama pull {model_name}"
-                )
+                model_available = False
+                model_initialized = True
+                return False
         else:
             logger.info(f"Model {model_name} is already available in Ollama.")
-            
+            model_available = True
+        
+        if model_available:
+            try:
+                logger.info("Performing warm-up inference to load model into memory...")
+                warm_up_start = time.time()
+                
+                warm_up_response = ollama.generate(
+                    model=model_name,
+                    prompt="Cześć, jak się masz?",
+                    options={"num_predict": 10}
+                )
+                
+                warm_up_time = time.time() - warm_up_start
+                logger.info(f"Model warm-up completed in {warm_up_time:.2f}s")
+                
+                del warm_up_response
+                gc.collect()
+                
+            except Exception as warm_up_error:
+                logger.error(f"Model warm-up failed: {str(warm_up_error)}")
+        
+        model_initialized = True
         return True
     except Exception as e:
         error_details = str(e) + "\n" + traceback.format_exc()
-        logger.error(f"Ollama connection error: {error_details}")
-        raise HTTPException(status_code=500, detail=f"Ollama error: {str(e)}")
+        logger.error(f"Ollama connection error during initialization: {error_details}")
+        model_initialized = True
+        model_available = False
+        return False
+            
+def get_model():
+    """
+    Gets the initialized model status.
+    
+    Returns:
+        bool: True if the model is available
+        
+    Raises:
+        HTTPException: When model is not initialized or not available
+    """
+    if not model_initialized:
+        logger.error(f"LLM service not initialized. This should have happened at startup.")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"LLM service not properly initialized. Please restart the server."
+        )
+        
+    if not model_available:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Model {model_name} is not available. Check server logs for details."
+        )
+    
+    return True
 
 
 @router.post("/generate")
@@ -182,8 +232,8 @@ async def generate_response(
                 {'role': 'user', 'content': request.prompt}
             ],
             options={
-                'temperature': 0.6, # To jest odpowiedzialne za kreatywność odpowiedzi
-                'top_p': 0.85 # To jest odpowiedzialne za różnorodność odpowiedzi
+                'temperature': 0.6,
+                'top_p': 0.85
             }
         )
         

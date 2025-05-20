@@ -1,3 +1,4 @@
+import platform
 import tempfile
 import os
 import requests
@@ -41,6 +42,70 @@ WHISPER_CPP_DIR.mkdir(exist_ok=True)
 WHISPER_CPP_MODEL_DIR.mkdir(exist_ok=True)
 WHISPER_CPP_BIN_DIR.mkdir(parents=True, exist_ok=True)
 FFMPEG_DIR.mkdir(exist_ok=True)
+
+stt_initialized = False
+
+async def initialize_stt():
+    """
+    Initializes the STT service by ensuring all required components are available.
+    Called at application startup rather than during endpoint calls.
+    
+    Returns:
+        bool: True if initialization was successful
+    """
+    global stt_initialized
+    
+    try:
+        logger.info("Initializing STT service...")
+        
+        try:
+            ensure_whisper_cpp_executable()
+        except FileNotFoundError as e:
+            logger.error(f"Whisper.cpp executable not found: {e}")
+            stt_initialized = False
+            return False
+            
+        try:
+            ensure_whisper_cpp_model(WHISPER_CPP_MODEL_NAME, WHISPER_CPP_MODEL_PATH)
+        except RuntimeError as e:
+            logger.error(f"Failed to ensure whisper.cpp model: {e}")
+            stt_initialized = False
+            return False
+            
+        try:
+            ensure_ffmpeg()
+        except RuntimeError as e:
+            logger.error(f"Failed to ensure FFmpeg: {e}")
+            stt_initialized = False
+            return False
+        
+        stt_initialized = True
+        logger.info("STT service initialized successfully")
+        return True
+    except Exception as e:
+        error_details = str(e) + "\n" + traceback.format_exc()
+        logger.error(f"STT initialization error: {error_details}")
+        stt_initialized = False
+        return False
+
+def get_stt_status():
+    """
+    Gets the initialized STT status.
+    
+    Returns:
+        bool: True if the STT service is available
+        
+    Raises:
+        HTTPException: When STT is not initialized
+    """
+    if not stt_initialized:
+        logger.error("STT service not initialized. This should have happened at startup.")
+        raise HTTPException(
+            status_code=500, 
+            detail="STT service not properly initialized. Please restart the server."
+        )
+    
+    return True
 
 
 def get_whisper_cpp_model_url(model_name):
@@ -258,12 +323,10 @@ async def transcribe_audio(
     temp_json_path = None
     
     try:
-        ensure_whisper_cpp_executable()
-        ensure_whisper_cpp_model(WHISPER_CPP_MODEL_NAME, WHISPER_CPP_MODEL_PATH)
-        ensure_ffmpeg()
-    except Exception as e:
-        logger.error(f"Failed to ensure prerequisites: {e}")
-        raise HTTPException(status_code=500, detail=f"Server configuration error: {e}")
+        get_stt_status()
+    except HTTPException as e:
+        logger.error(f"STT service not properly initialized: {e}")
+        raise
     
     try:
         suffix = Path(file.filename).suffix if file.filename else ".tmpaudio"
@@ -319,58 +382,123 @@ async def transcribe_audio(
         json_result = None
         
         try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+            if platform.system() == "Windows":
+                logger.info("Using subprocess.Popen for whisper-cli on Windows.")
+                string_command = [str(c) for c in command]
+                process = subprocess.Popen(
+                    string_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8',
+                    bufsize=1,
+                    universal_newlines=True
+                )
+                logger.info(f"Started whisper-cli process with PID: {process.pid} using subprocess.Popen")
 
-            logger.info(f"Started whisper-cli process with PID: {process.pid}")
-            full_transcription_text = ""
-            
-            segment_regex = re.compile(r"\[(\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}\.\d{3})\]\s*(.*)")
+                full_transcription_text = ""
+                segment_regex = re.compile(r"\[(\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}\.\d{3})\]\s*(.*)")
 
-            while True:
-                stdout_line_bytes = await process.stdout.readline()
-                if not stdout_line_bytes:
-                    logger.info("Whisper stdout stream ended.")
-                    break
+                for line in iter(process.stdout.readline, ''):
+                    if not line and process.poll() is not None:
+                        break
+                    line = line.strip()
+                    match = segment_regex.match(line)
+                    if match:
+                        start_time_str = match.group(1)
+                        end_time_str = match.group(2)
+                        segment_text = match.group(3).strip()
 
-                line = stdout_line_bytes.decode('utf-8', errors='replace').strip()
-                
-                match = segment_regex.match(line)
-                if match:
-                    start_time_str = match.group(1)
-                    end_time_str = match.group(2)
-                    segment_text = match.group(3).strip()
+                        if segment_text:
+                            logger.info(f"[whisper-cli segment]: [{start_time_str} --> {end_time_str}] {segment_text}")
+                            full_transcription_text += segment_text + " "
 
-                    if segment_text:
-                        logger.info(f"[whisper-cli segment]: [{start_time_str} --> {end_time_str}] {segment_text}")
-                        full_transcription_text += segment_text + " "
-
-                        sse_data = {
-                            "type": "segment",
-                            "start_time": start_time_str,
-                            "end_time": end_time_str,
-                            "text": segment_text
-                        }
-                        yield f"data: {json.dumps(sse_data)}\n\n"
-                        await asyncio.sleep(0)
-                    else:
-                       logger.debug(f"[whisper-cli] Matched regex but segment text was empty: {line}")
-                else:
-                    if line.startswith("whisper_print_progress_callback"):
+                            sse_data = {
+                                "type": "segment",
+                                "start_time": start_time_str,
+                                "end_time": end_time_str,
+                                "text": segment_text
+                            }
+                            yield f"data: {json.dumps(sse_data, ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(0)
+                        else:
+                           logger.debug(f"[whisper-cli] Matched regex but segment text was empty: {line}")
+                    elif "whisper_print_progress_callback" in line:
                         logger.info(f"[whisper-cli progress]: {line}")
-                        progress_match = re.search(r"progress = (\d+)%", line)
+                        progress_match = re.search(r"progress\s*=\s*(\d+)%", line)
                         if progress_match:
                             progress_pct = progress_match.group(1)
                             progress_data = {
                                 "type": "progress",
                                 "percent": progress_pct
                             }
-                            yield f"data: {json.dumps(progress_data)}\n\n"
-                    elif "-->" in line and not line.startswith("["):
-                        logger.warning(f"[whisper-cli possible segment?]: {line}")
+                            yield f"data: {json.dumps(progress_data,ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(0)
+                    elif "output_json: saving output to" in line:
+                        logger.info(f"[whisper-cli json output]: {line}")
+                        json_path_match = re.search(r"output to '([^']+)'", line)
+                        if json_path_match:
+                            json_output_path = json_path_match.group(1)
+                            logger.info(f"Detected JSON output path: {json_output_path}")
+                            if json_output_path != str(temp_json_path):
+                                temp_json_path = Path(json_output_path)
+                    elif line:
+                        logger.debug(f"[whisper-cli other]: {line}")
+                
+                stdout_from_communicate, stderr_str_from_communicate = process.communicate() 
+                return_code = process.returncode
+                stderr_text = stderr_str_from_communicate.strip() if stderr_str_from_communicate else ""
+
+            else:
+                logger.info("Using asyncio.create_subprocess_exec for whisper-cli.")
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                logger.info(f"Started whisper-cli process with PID: {process.pid}")
+                full_transcription_text = ""
+                segment_regex = re.compile(r"\[(\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}\.\d{3})\]\s*(.*)")
+
+                while True:
+                    stdout_line_bytes = await process.stdout.readline()
+                    if not stdout_line_bytes:
+                        logger.info("Whisper stdout stream ended.")
+                        break
+
+                    line = stdout_line_bytes.decode('utf-8', errors='replace').strip()
+                    
+                    match = segment_regex.match(line)
+                    if match:
+                        start_time_str = match.group(1)
+                        end_time_str = match.group(2)
+                        segment_text = match.group(3).strip()
+
+                        if segment_text:
+                            logger.info(f"[whisper-cli segment]: [{start_time_str} --> {end_time_str}] {segment_text}")
+                            full_transcription_text += segment_text + " "
+
+                            sse_data = {
+                                "type": "segment",
+                                "start_time": start_time_str,
+                                "end_time": end_time_str,
+                                "text": segment_text
+                            }
+                            yield f"data: {json.dumps(sse_data, ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(0)
+                        else:
+                           logger.debug(f"[whisper-cli] Matched regex but segment text was empty: {line}")
+                    elif "whisper_print_progress_callback" in line:
+                        logger.info(f"[whisper-cli progress]: {line}")
+                        progress_match = re.search(r"progress\s*=\s*(\d+)%", line)
+                        if progress_match:
+                            progress_pct = progress_match.group(1)
+                            progress_data = {
+                                "type": "progress",
+                                "percent": progress_pct
+                            }
+                            yield f"data: {json.dumps(progress_data, ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(0)
                     elif "output_json: saving output to" in line:
                         logger.info(f"[whisper-cli json output]: {line}")
                         json_path_match = re.search(r"output to '([^']+)'", line)
@@ -382,11 +510,12 @@ async def transcribe_audio(
                     elif line:
                         logger.debug(f"[whisper-cli other]: {line}")
 
-            await process.wait()
-            return_code = process.returncode
-            
-            stderr_bytes = await process.stderr.read()
-            stderr_text = stderr_bytes.decode('utf-8', errors='replace').strip()
+                await process.wait()
+                return_code = process.returncode
+                
+                stderr_bytes = await process.stderr.read()
+                stderr_text = stderr_bytes.decode('utf-8', errors='replace').strip()
+
             if stderr_text:
                 if return_code == 0:
                     logger.warning(f"Whisper stderr output (exit code 0):\n{stderr_text}")
@@ -402,27 +531,30 @@ async def transcribe_audio(
                     
                     logger.debug(f"Parsed JSON result keys: {list(json_result.keys())}")
                     
-                    if "transcription" in json_result and isinstance(json_result["transcription"], list):
-                        json_segments = json_result["transcription"]
+                    segments_key = "segments" if "segments" in json_result else "transcription"
+
+                    if segments_key in json_result and isinstance(json_result[segments_key], list):
+                        json_segments = json_result[segments_key]
+                        processed_segments_text = []
                         for segment in json_segments:
-                            if "text" in segment:
+                            segment_text_value = segment.get("text", "").strip()
+                            if segment_text_value:
+                                processed_segments_text.append(segment_text_value)
                                 segment_data = {
                                     "type": "json_segment",
-                                    "start": segment.get("from", 0),
-                                    "end": segment.get("to", 0),
-                                    "text": segment["text"]
+                                    "start": segment.get("t0", segment.get("from", 0)),
+                                    "end": segment.get("t1", segment.get("to", 0)),
+                                    "text": segment_text_value
                                 }
-                                yield f"data: {json.dumps(segment_data)}\n\n"
+                                yield f"data: {json.dumps(segment_data, ensure_ascii=False)}\n\n"
                                 await asyncio.sleep(0)
                         
-                        full_json_text = "".join([segment.get("text", "") for segment in json_segments])
-                        if full_json_text:
-                            full_transcription_text = full_json_text
+                        if processed_segments_text:
+                             full_transcription_text = " ".join(processed_segments_text)
                 except Exception as json_err:
                     logger.error(f"Error reading/parsing JSON output: {json_err}")
                     logger.error(traceback.format_exc())
             
-            # Send final result
             if return_code != 0:
                 error_data = {
                     "type": "error",
@@ -430,7 +562,7 @@ async def transcribe_audio(
                     "exit_code": return_code,
                     "stderr": stderr_text
                 }
-                yield f"data: {json.dumps(error_data)}\n\n"
+                yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
             else:
                 elapsed_time = time.time() - start_time
                 final_data = {
@@ -441,30 +573,44 @@ async def transcribe_audio(
                     "has_json": json_result is not None
                 }
                 logger.info(f"Transcription completed successfully in {elapsed_time:.2f}s")
-                yield f"data: {json.dumps(final_data)}\n\n"
+                yield f"data: {json.dumps(final_data, ensure_ascii=False)}\n\n"
 
         except asyncio.CancelledError:
             logger.warning("Transcription stream cancelled by client.")
             if process and process.returncode is None:
-                try:
-                    logger.info(f"Terminating whisper process {process.pid} due to cancellation.")
-                    process.terminate()
+                if hasattr(process, 'terminate'):
                     try:
-                        await asyncio.wait_for(process.wait(), timeout=5.0)
-                        logger.info(f"Process {process.pid} terminated gracefully.")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Process {process.pid} did not terminate, killing.")
+                        logger.info(f"Terminating whisper process {process.pid} due to cancellation.")
+                        process.terminate()
+                        try:
+                            await asyncio.wait_for(process.wait(), timeout=5.0)
+                            logger.info(f"Process {process.pid} terminated gracefully.")
+                        except asyncio.TimeoutError:
+                            logger.warning(f"Process {process.pid} did not terminate, killing.")
+                            process.kill()
+                            await process.wait()
+                            logger.info(f"Process {process.pid} killed.")
+                    except Exception as term_err:
+                        logger.error(f"Error during process termination: {term_err}")
+                elif isinstance(process, subprocess.Popen):
+                    try:
+                        logger.info(f"Terminating whisper process {process.pid} (subprocess.Popen) due to cancellation.")
+                        process.terminate()
+                        process.wait(timeout=5.0)
+                        logger.info(f"Process {process.pid} (subprocess.Popen) terminated gracefully.")
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"Process {process.pid} (subprocess.Popen) did not terminate, killing.")
                         process.kill()
-                        await process.wait()
-                        logger.info(f"Process {process.pid} killed.")
-                except Exception as term_err:
-                    logger.error(f"Error during process termination: {term_err}")
-            
+                        process.wait()
+                        logger.info(f"Process {process.pid} (subprocess.Popen) killed.")
+                    except Exception as term_err:
+                        logger.error(f"Error during subprocess.Popen termination: {term_err}")
+
             cancel_data = {
                 "type": "cancelled",
                 "message": "Transcription cancelled by client."
             }
-            yield f"data: {json.dumps(cancel_data)}\n\n"
+            yield f"data: {json.dumps(cancel_data, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             logger.error(f"Error during transcription streaming: {e}")
@@ -473,16 +619,16 @@ async def transcribe_audio(
                 "type": "error",
                 "message": f"Server error during transcription: {str(e)}"
             }
-            yield f"data: {json.dumps(error_data)}\n\n"
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
             
         finally:
-            for path in [temp_path, temp_json_path]:
-                if path and path.exists():
+            for path_to_clean in [temp_path, temp_json_path]:
+                if path_to_clean and path_to_clean.exists():
                     try:
-                        os.unlink(path)
-                        logger.debug(f"Deleted temporary file: {path}")
+                        os.unlink(path_to_clean)
+                        logger.debug(f"Deleted temporary file: {path_to_clean}")
                     except Exception as del_err:
-                        logger.warning(f"Failed to delete temporary file {path}: {del_err}")
+                        logger.warning(f"Failed to delete temporary file {path_to_clean}: {del_err}")
             
             logger.info("Transcription streaming completed and resources cleaned up.")
 
