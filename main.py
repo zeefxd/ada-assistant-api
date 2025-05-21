@@ -7,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 import logging
 from contextlib import asynccontextmanager
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ async def lifespan(app: FastAPI):
     
     try:
         from api.stt import initialize_stt
-        logger.info("Starting STT initialization...")
+        logger.info("Starting STT (Whisper Server) initialization...")
         stt_initialized = await initialize_stt()
         
         if stt_initialized:
@@ -37,7 +38,6 @@ async def lifespan(app: FastAPI):
             logger.warning("STT service initialization failed. Transcription endpoints may not work properly.")
     except Exception as e:
         logger.error(f"STT initialization error: {str(e)}")
-    
     
     try:
         from api.tts import initialize_tts
@@ -56,21 +56,31 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info("Application shutting down...")
+    try:
+        from api.stt import shutdown_stt
+        logger.info("Shutting down STT (Whisper Server)...")
+        await shutdown_stt()
+        logger.info("STT service (Whisper Server) shut down.")
+    except Exception as e:
+        logger.error(f"Error during STT (Whisper Server) shutdown: {str(e)}")
+    
+    logger.info("Application shutdown complete.")
+
 
 app = FastAPI(title="Ada API", lifespan=lifespan)
 
 app.include_router(router)
 
-class PyInstrumentMiddleWare(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        profiler = Profiler(interval=0.001, async_mode="enabled")
-        profiler.start()
-        response = await call_next(request)
-        profiler.stop()
-        profiler.write_html("profile.html")
-        return response
+# class PyInstrumentMiddleWare(BaseHTTPMiddleware):
+#     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+#         profiler = Profiler(interval=0.001, async_mode="enabled")
+#         profiler.start()
+#         response = await call_next(request)
+#         profiler.stop()
+#         profiler.write_html("profile.html")
+#         return response
 
-app.add_middleware(PyInstrumentMiddleWare)
+# app.add_middleware(PyInstrumentMiddleWare)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
