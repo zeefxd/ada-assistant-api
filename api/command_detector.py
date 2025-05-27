@@ -13,37 +13,27 @@ class CommandType(Enum):
 
 
 class CommandDetector:
-    """A class for detecting and processing Spotify music commands"""
 
     def __init__(self):
         self.music_patterns = [
-            # Polecenia odtwarzania
-            r"(?:puść|włącz|odtwórz|zagraj|graj|puśc|zagrj|odtwarz|pusć|odtworz|włacz)\s+(.+)",
-            r"(?:chcę usłyszeć|chciałbym usłyszeć|chciałabym usłyszeć|chciałbym posłuchać|chciałabym posłuchać|zagraj mi)\s+(.+)",
-            r"(?:poproszę|proszę o|proszę|daj|daj mi)\s+(.+?)(?:\s+(?:piosenkę|utwór|muzykę|piosenka))?",
-            r"(?:słuchaj|słuchać|słuchanie|muzyka|posłuchajmy|posłuchamy)\s+(.+)",
-            r"(?:zagraj|puść)(?:\s+piosenkę|\s+utwór|\s+coś)?\s+(?:od|przez|z repertuaru|autorstwa|wykonawcy)?\s+(.+)",
-            r"(?:znasz|znasz może|masz|masz może)(?:\s+piosenkę|\s+utwór)?\s+(.+)",
-            # Polecenia kontroli odtwarzania
-            r"(?:zatrzymaj|wstrzymaj|pauza|stop|pause|zatszymaj|wsztymaj|zróbpauę|pałza|zastanów|zaczekaj)(?:\s+(?:muzykę|odtwarzanie|piosenkę|to))?",
-            r"(?:wznów|kontynuuj|start|play|resume|dalej|graj dalej|kontynułj|wznuf|odtwarzaj dalej)(?:\s+(?:muzykę|odtwarzanie|piosenkę|to))?",
-            r"(?:następny|następna|kolejny|kolejna|dalej|next|skip|pomiń|następ|nastempny|nexxt|skipnij|idź dalej)(?:\s+(?:utwór|piosenka|kawałek|numer|track))?",
-            r"(?:poprzedni|poprzednia|wróć|cofnij|back|previous|wstecz|popszedni|poprszedni|wróc|poprzednia piosenka)(?:\s+(?:utwór|piosenka|kawałek|numer|track))?",
-            # Polecenia głośności
-            r"(?:podgłośnij|zwiększ głośność|głośniej|pogłośnij|daj głośniej|podkręć|mocniej|głośno|zwiększ|zrób głośniej|głośnieeej)(?:\s+o\s+(\d+))?(?:\s+(?:procent|%|punktów))?",
-            r"(?:ścisz|zmniejsz głośność|ciszej|przycisz|zrób ciszej|ściż|zciż|ciszej|ścisz to|przycisz głośność)(?:\s+o\s+(\d+))?(?:\s+(?:procent|%|punktów))?",
-            r"(?:ustaw|zmień|daj|zrób)(?:\s+(?:głośność|volume))?\s+na\s+(\d+)(?:\s+(?:procent|%|punktów))?",
-            r"(?:ustaw|zmień|daj)(?:\s+(?:poziom głośności|głośność|poziom))?\s+(\d+)(?:\s+(?:procent|%|punktów))?",
-            # Pytania o aktualny utwór
-            r"(?:co\s+(?:to\s+za|jest\s+to\s+za|to\s+jest\s+za))?\s+(?:piosenka|utwór|kawałek|muzyka|numer|track)(?:\s+gra)?",
-            r"(?:jaka|jaki|co|kto)(?:\s+teraz)?\s+(?:leci|gra|jest włączone|jest odtwarzane|słychać)",
-            r"(?:kto|jaki artysta|jaka artystka|jaki wykonawca|jaka wykonawczyni)(?:\s+to)?\s+(?:śpiewa|gra|wykonuje|jest)",
-            # Polecenia dotyczące playlist/albumów
-            r"(?:puść|włącz|odtwórz|zagraj|graj)(?:\s+(?:playlistę|album|płytę))?\s+(.+)",
-            r"(?:ustaw|włącz)(?:\s+tryb)?\s+(?:shuffle|losowy|losowania|losowo|losowe|przypadkowy|przypadkowe)",
-            r"(?:wyłącz)(?:\s+tryb)?\s+(?:shuffle|losowy|losowania|losowo|losowe|przypadkowy|przypadkowe)",
-            # Bardziej ogólne polecenia
-            r"(?:spotify|muzyka|audio)(?:\s+(.+))?",
+            # Play commands
+            r"^(?:puść|włącz|odtwórz|zagraj)\s+(?:utwór|piosenkę|muzykę|kawałek)?\s*(.+?)$",
+            
+            # Playback control commands
+            r"^(?:zatrzymaj|wstrzymaj|pauza|stop|pause)(?:\s+(?:utwór|piosenkę|muzykę|odtwarzanie|to))?.*$",
+            r"^(?:wznów|kontynuuj|start|play|resume)(?:\s+(?:utwór|piosenkę|muzykę|odtwarzanie|to))?.*$",
+            r"^(?:następny|następna|kolejny|kolejna|dalej|next)(?:\s+(?:utwór|piosenka|kawałek|numer))?.*$",
+            r"^(?:poprzedni|poprzednia|wróć|cofnij)(?:\s+(?:utwór|piosenka|kawałek|numer))?.*$",
+            
+            # Volume commands
+            r"^(?:podgłośnij|zwiększ\s+głośność|głośniej)(?:\s+(?:utwór|piosenkę|muzykę|to))?(?:.*?(\d+))?.*$",
+            r"^(?:ścisz|zmniejsz\s+głośność|ciszej)(?:\s+(?:utwór|piosenkę|muzykę|to))?(?:.*?(\d+))?.*$",
+            r"^(?:ustaw|zmień)\s+głośność\s+na\s+(\d+).*$",
+            
+            # Current track
+            r"^(?:jaki|jaka)(?:\s+(?:aktualny|aktualna|obecny|obecna))?\s+(?:utwór|piosenka)(?:\s+(?:jest|jest teraz|teraz))?\s+(?:odtwarzany|odtwarzana|grany|grana|leci)?.*$",
+            r"^co(?:\s+(?:teraz|aktualnie))?\s+(?:leci|gra|jest\s+odtwarzane).*$",
+            r"^(?:co\s+to\s+za|jaka\s+to)\s+(?:piosenka|utwór|muzyka).*$"
         ]
 
     def detect_command(
@@ -70,85 +60,77 @@ class CommandDetector:
             match = re.search(pattern, text)
             if match:
                 logger.info(f"Wykryto polecenie muzyczne: {text}")
-                return True, CommandType.MUSIC, self._extract_music_params(text)
+                return True, CommandType.MUSIC, self._extract_music_params(text, pattern, match)
 
         return False, None, {}
 
-    def _extract_music_params(self, text: str) -> Dict[str, Any]:
+    def _extract_music_params(self, text: str, pattern: str, match) -> Dict[str, Any]:
         """
         Extracts parameters from the music command.
 
         Args:
             text (str): Command text
+            pattern (str): Pattern that matched
+            match: Regex match object
 
         Returns:
             Dict[str, Any]: Parameters of the music command
         """
-        text = text.lower().strip()
         params = {}
+        
+        spotify_suffix_match = re.search(r'(?:na|w)\s+spotify\s*$', text.lower())
+        params["targetPlatform"] = "Spotify" if spotify_suffix_match else "none"
 
-        play_match = re.search(r"(?:puść|włącz|odtwórz|zagraj|graj)\s+(.+)", text)
-        if play_match:
-            query = play_match.group(1).strip()
-            params["action"] = "play"
-            params["query"] = query
+        if re.search(r"puść|włącz|odtwórz|zagraj", pattern):
+            if match.group(1):
+                params["action"] = "play"
+                
+                query = match.group(1).strip()
+                if spotify_suffix_match:
+                    query = re.sub(r'\s+(?:na|w)\s+spotify\s*$', '', query, flags=re.IGNORECASE)
+                    
+                params["query"] = query
             return params
 
-        if re.search(
-            r"(?:zatrzymaj|wstrzymaj|pauza|stop|pause)(?:\s+muzykę|\s+odtwarzanie)?",
-            text,
-        ):
+        if re.search(r"zatrzymaj|wstrzymaj|pauza|stop|pause", pattern):
             params["action"] = "pause"
             return params
 
-        if re.search(
-            r"(?:wznów|kontynuuj|start|play|resume)(?:\s+muzykę|\s+odtwarzanie)?", text
-        ):
+        if re.search(r"wznów|kontynuuj|start|play|resume", pattern):
             params["action"] = "resume"
             return params
 
-        if re.search(
-            r"(?:następny|następna|kolejny|kolejna|dalej|next)(?:\s+utwór|\s+piosenka)?",
-            text,
-        ):
+        if re.search(r"następny|następna|kolejny|kolejna|dalej|next", pattern):
             params["action"] = "next"
             return params
 
-        if re.search(
-            r"(?:poprzedni|poprzednia|wróć|previous)(?:\s+utwór|\s+piosenka)?", text
-        ):
+        if re.search(r"poprzedni|poprzednia|wróć|cofnij", pattern):
             params["action"] = "previous"
             return params
 
-        volume_up_match = re.search(
-            r"(?:podgłośnij|zwiększ głośność|głośniej)(?:\s+o\s+(\d+))?", text
-        )
-        if volume_up_match:
+        if re.search(r"podgłośnij|zwiększ\s+głośność|głośniej", pattern):
             params["action"] = "volume_up"
-            params["value"] = (
-                int(volume_up_match.group(1)) if volume_up_match.group(1) else 10
-            )
+            volume_match = re.search(r'(\d+)', text)
+            params["value"] = int(volume_match.group(1)) if volume_match else 10
             return params
 
-        volume_down_match = re.search(
-            r"(?:ścisz|zmniejsz głośność|ciszej)(?:\s+o\s+(\d+))?", text
-        )
-        if volume_down_match:
+        if re.search(r"ścisz|zmniejsz\s+głośność|ciszej", pattern):
             params["action"] = "volume_down"
-            params["value"] = (
-                int(volume_down_match.group(1)) if volume_down_match.group(1) else 10
-            )
+            volume_match = re.search(r'(\d+)', text)
+            params["value"] = int(volume_match.group(1)) if volume_match else 10
             return params
 
-        volume_set_match = re.search(
-            r"(?:ustaw|zmień)(?:\s+głośność)?\s+na\s+(\d+)", text
-        )
-        if volume_set_match:
+        if re.search(r"ustaw.*głośność.*na", pattern):
             params["action"] = "volume_set"
-            params["value"] = int(volume_set_match.group(1))
+            volume_match = re.search(r'(\d+)', text)
+            params["value"] = int(volume_match.group(1)) if volume_match else 50
             return params
 
-        return {"action": "unknown", "raw_text": text}
+        if re.search(r"jaki|jaka|co.*leci|co.*gra|co.*odtwarzane|co.*to.*za", pattern):
+            params["action"] = "current_track"
+            return params
+
+        return {"action": "unknown", "raw_text": text, "targetPlatform": "none"}
 
     def execute_command(
         self, cmd_type: CommandType, params: Dict[str, Any]
@@ -171,29 +153,33 @@ class CommandDetector:
             }
 
         action = params.get("action", "")
+        platform = params.get("targetPlatform", "none")
+        platform_msg = f" na {platform}" if platform != "none" else ""
 
         if action == "play" and "query" in params:
-            message = f"Odtwarzam {params['query']}"
+            message = f"Odtwarzam {params['query']}{platform_msg}"
         elif action == "pause":
-            message = "Wstrzymuję odtwarzanie"
+            message = f"Wstrzymuję odtwarzanie{platform_msg}"
         elif action == "resume":
-            message = "Wznawiam odtwarzanie"
+            message = f"Wznawiam odtwarzanie{platform_msg}"
         elif action == "next":
-            message = "Przechodzę do następnego utworu"
+            message = f"Przechodzę do następnego utworu{platform_msg}"
         elif action == "previous":
-            message = "Przechodzę do poprzedniego utworu"
+            message = f"Przechodzę do poprzedniego utworu{platform_msg}"
         elif action == "volume_up":
-            message = f"Zwiększam głośność o {params.get('value', 10)}%"
+            message = f"Zwiększam głośność o {params.get('value', 10)}%{platform_msg}"
         elif action == "volume_down":
-            message = f"Zmniejszam głośność o {params.get('value', 10)}%"
+            message = f"Zmniejszam głośność o {params.get('value', 10)}%{platform_msg}"
         elif action == "volume_set":
-            message = f"Ustawiam głośność na {params.get('value', 50)}%"
+            message = f"Ustawiam głośność na {params.get('value', 50)}%{platform_msg}"
+        elif action == "current_track":
+            message = f"Sprawdzam aktualnie odtwarzany utwór{platform_msg}"
         else:
-            message = "Wykonuję polecenie muzyczne"
+            message = f"Wykonuję polecenie muzyczne{platform_msg}"
 
         return {
-            "command_type": "music",
+            "type": "music",
             "params": params,
             "user_message": message,
-            "requires_spotify_token": True,
+            "requires_spotify_token": platform.lower() == "spotify",
         }

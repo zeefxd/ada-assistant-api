@@ -190,7 +190,7 @@ async def generate_response(
             command_info = command_detector.execute_command(cmd_type, params)
             logger.info(f"Music command detected with parameters: {params}")
             
-            if effective_token:
+            if params.get("targetPlatform", "").lower() == "spotify" and effective_token:
                 spotify_handler = SpotifyHandler(access_token=effective_token)
                 spotify_result = await spotify_handler.execute_command(params)
                 
@@ -200,7 +200,7 @@ async def generate_response(
                     command_info["user_message"] = spotify_result["message"]
                 
                 command_info["spotify_result"] = spotify_result
-            else:
+            elif params.get("targetPlatform", "").lower() == "spotify" and not effective_token:
                 logger.warning("Spotify command detected but no Spotify token provided")
                 command_info["user_message"] = "Aby sterować odtwarzaczem muzyki, musisz najpierw połączyć konto Spotify w aplikacji."
                 command_info["spotify_result"] = {"success": False, "message": "No Spotify token provided"}

@@ -55,6 +55,8 @@ class SpotifyHandler:
                 return await self.skip_to_next()
             elif action == "previous":
                 return await self.skip_to_previous()
+            elif action == "current_track":
+                return await self.get_current_track()
             elif action == "volume_up" or action == "volume_down":
                 value = params.get("value", 10)
                 value = value if action == "volume_up" else -value
@@ -326,4 +328,58 @@ class SpotifyHandler:
         
         except Exception as e:
             logger.error(f"Wyjątek podczas ustawiania głośności: {e}")
+            return {"success": False, "message": f"Błąd: {str(e)}"}
+        
+    async def get_current_track(self) -> Dict[str, Any]:
+        """
+        Gets information about the currently playing track.
+        
+        Returns:
+            Dict[str, Any]: Result with current track information
+        """
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        try:
+            response = requests.get(
+                f"{SPOTIFY_API_BASE_URL}/me/player/currently-playing",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data and data.get("item"):
+                    track = data["item"]
+                    track_name = track.get("name", "Nieznany utwór")
+                    artist_name = track.get("artists", [{}])[0].get("name", "Nieznany wykonawca")
+                    is_playing = data.get("is_playing", False)
+                    
+                    status = "odtwarzany" if is_playing else "wstrzymany"
+                    message = f"Aktualnie {status}: {track_name} wykonawcy {artist_name}"
+                    
+                    return {
+                        "success": True,
+                        "message": message,
+                        "track": {
+                            "name": track_name,
+                            "artist": artist_name,
+                            "is_playing": is_playing
+                        }
+                    }
+                else:
+                    return {"success": False, "message": "Nic nie jest obecnie odtwarzane"}
+                    
+            elif response.status_code == 204:
+                return {"success": False, "message": "Nic nie jest obecnie odtwarzane"}
+            elif response.status_code == 404:
+                return {
+                    "success": False, 
+                    "message": "Nie znaleziono aktywnego urządzenia Spotify. Otwórz aplikację Spotify na swoim urządzeniu."
+                }
+            else:
+                logger.error(f"Błąd pobierania aktualnego utworu: {response.status_code} - {response.text}")
+                return {"success": False, "message": "Nie udało się pobrać informacji o aktualnym utworze"}
+        
+        except Exception as e:
+            logger.error(f"Wyjątek podczas pobierania aktualnego utworu: {e}")
             return {"success": False, "message": f"Błąd: {str(e)}"}
